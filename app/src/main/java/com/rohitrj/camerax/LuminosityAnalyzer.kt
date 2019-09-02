@@ -1,5 +1,7 @@
 package com.rohitrj.camerax
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.core.ImageAnalysis
@@ -22,6 +24,7 @@ class LuminosityAnalyzer : ImageAnalysis.Analyzer {
     }
 
     override fun analyze(image: ImageProxy, rotationDegrees: Int) {
+
         val currentTimestamp = System.currentTimeMillis()
         // Calculate the average luma no more often than every second
         if (currentTimestamp - lastAnalyzedTimestamp >=

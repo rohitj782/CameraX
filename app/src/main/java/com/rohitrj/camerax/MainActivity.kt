@@ -5,8 +5,10 @@ import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.*
+import android.graphics.*
 import android.util.Size
-import android.graphics.Matrix
+import android.media.Image
+import android.os.Binder
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -19,6 +21,11 @@ import android.widget.Toast
 import androidx.camera.core.*
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.firebase.ml.vision.FirebaseVision
+import com.google.firebase.ml.vision.common.FirebaseVisionImage
+import com.google.firebase.ml.vision.text.FirebaseVisionText
+import kotlinx.android.synthetic.main.activity_main.*
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -38,12 +45,17 @@ class MainActivity : AppCompatActivity() {
             viewFinder.post { startCamera() }
         } else {
             ActivityCompat.requestPermissions(
-                this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
+                this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
+            )
         }
 
         // Every time the provided texture view changes, recompute layout
         viewFinder.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateTransform()
+        }
+
+        searchText.setOnClickListener {
+            runTextRecognition(camera_view.bitmap)
         }
     }
 
@@ -85,12 +97,17 @@ class MainActivity : AppCompatActivity() {
         // Build the image capture use case and attach button click listener
         val imageCapture = ImageCapture(imageCaptureConfig)
         findViewById<ImageButton>(R.id.capture_button).setOnClickListener {
-            val file = File(externalMediaDirs.first(),
-                "${System.currentTimeMillis()}.jpg")
+            val file = File(
+                externalMediaDirs.first(),
+                "${System.currentTimeMillis()}.jpg"
+            )
+
             imageCapture.takePicture(file,
                 object : ImageCapture.OnImageSavedListener {
-                    override fun onError(error: ImageCapture.UseCaseError,
-                                         message: String, exc: Throwable?) {
+                    override fun onError(
+                        error: ImageCapture.UseCaseError,
+                        message: String, exc: Throwable?
+                    ) {
                         val msg = "Photo capture failed: $message"
                         Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                         Log.e("CameraXApp", msg)
@@ -101,26 +118,24 @@ class MainActivity : AppCompatActivity() {
                         val msg = "Photo capture succeeded: ${file.absolutePath}"
                         Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                         Log.d("CameraXApp", msg)
+
                     }
                 })
         }
-
-//        val config = ImageCaptureConfig.Builder()
-//            .setLensFacing(CameraX.LensFacing.FRONT)
-//        .setFlashMode(FlashMode.OFF)
-//        .setTargetAspectRatio(Rational(2,3))
-//        .build()
         // Setup image analysis pipeline that computes average pixel luminance
         val analyzerConfig = ImageAnalysisConfig.Builder().apply {
             // Use a worker thread for image analysis to prevent glitches
             val analyzerThread = HandlerThread(
-                "LuminosityAnalysis").apply { start() }
+                "LuminosityAnalysis"
+            ).apply { start() }
             setCallbackHandler(Handler(analyzerThread.looper))
             // In our analysis, we care more about the latest image than
             // analyzing *every* image
             setImageReaderMode(
-                ImageAnalysis.ImageReaderMode.ACQUIRE_LATEST_IMAGE)
+                ImageAnalysis.ImageReaderMode.ACQUIRE_LATEST_IMAGE
+            )
         }.build()
+
 
         // Build the image analysis use case and instantiate our analyzer
         val analyzerUseCase = ImageAnalysis(analyzerConfig).apply {
@@ -134,6 +149,44 @@ class MainActivity : AppCompatActivity() {
         CameraX.bindToLifecycle(this, preview, imageCapture, analyzerUseCase)
     }
 
+    private fun runTextRecognition(mSelectedImage: Bitmap) {
+        val image = FirebaseVisionImage.fromBitmap(mSelectedImage)
+        val recognizer = FirebaseVision.getInstance()
+            .onDeviceTextRecognizer
+        recognizer.processImage(image).addOnSuccessListener {
+            processTextRecognitionResult(it)
+        }.addOnFailureListener {
+            it.printStackTrace()
+        }
+    }
+
+
+    private fun processTextRecognitionResult(texts: FirebaseVisionText) {
+
+        val blocks: List<FirebaseVisionText.TextBlock> = texts.textBlocks
+        if (blocks.isEmpty()) {
+            showToast("No text found")
+            return
+        }
+        graphic_overlay.clear()
+        for (i in blocks) {
+            val lines: List<FirebaseVisionText.Line> = i.lines
+            for (j in lines) {
+                val elements: List<FirebaseVisionText.Element> = j.elements
+                for (k in elements) {
+                    val textGraphic: GraphicOverlay.Graphic = TextGraphic(graphic_overlay, k)
+                    graphic_overlay.add(textGraphic)
+
+                }
+            }
+        }
+
+    }
+
+    private fun showToast(message: String) {
+        Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+    }
+
     private fun updateTransform() {
         val matrix = Matrix()
 
@@ -142,7 +195,7 @@ class MainActivity : AppCompatActivity() {
         val centerY = viewFinder.height / 2f
 
         // Correct preview output to account for display rotation
-        val rotationDegrees = when(viewFinder.display.rotation) {
+        val rotationDegrees = when (viewFinder.display.rotation) {
             Surface.ROTATION_0 -> 0
             Surface.ROTATION_90 -> 90
             Surface.ROTATION_180 -> 180
@@ -154,6 +207,7 @@ class MainActivity : AppCompatActivity() {
         // Finally, apply transformations to our TextureView
         viewFinder.setTransform(matrix)
     }
+
     /**
      * Process result from permission request dialog box, has the request
      * been granted? If yes, start Camera. Otherwise display a toast
